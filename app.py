@@ -38,6 +38,7 @@ class Config:
     SECRET_KEY = os.environ.get('SECRET_KEY') or secrets.token_urlsafe(32)
     JWT_SECRET_KEY = os.environ.get(
         'JWT_SECRET_KEY') or secrets.token_urlsafe(32)
+    JWT_ACCESS_TOKEN_EXPIRES = timedelta(days=1)
 
     # Upload configuration
     UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER') or 'uploads'
@@ -49,7 +50,23 @@ app.config.from_object(Config)
 # Initialize extensions
 db = SQLAlchemy(app)
 jwt = JWTManager(app)
-CORS(app, origins=["*"])  # Configure as needed for production
+CORS(app, origins=["*"])
+
+# JWT Identity handlers - FIXED
+
+
+@jwt.user_identity_loader
+def user_identity_lookup(user_id):
+    """Convert user ID to string for JWT storage"""
+    return str(user_id)
+
+
+@jwt.user_lookup_loader
+def user_lookup_callback(_jwt_header, jwt_data):
+    """Load user from JWT data"""
+    identity = jwt_data["sub"]
+    return User.query.filter_by(id=int(identity)).one_or_none()
+
 
 # Create upload directory
 UPLOAD_FOLDER = app.config['UPLOAD_FOLDER']
@@ -128,7 +145,8 @@ def health_check():
         # Test database connection
         db.session.execute('SELECT 1')
         db_status = 'connected'
-    except:
+    except Exception as e:
+        print(f"Database health check failed: {e}")
         db_status = 'error'
 
     return jsonify({
@@ -169,7 +187,8 @@ def register():
         db.session.add(user)
         db.session.commit()
 
-        access_token = create_access_token(identity=user.id)
+        # FIXED: Convert user ID to string for JWT
+        access_token = create_access_token(identity=str(user.id))
         return jsonify({
             'message': 'User created successfully',
             'access_token': access_token,
@@ -198,7 +217,8 @@ def login():
         if not user or not user.check_password(password):
             return jsonify({'error': 'Invalid credentials'}), 401
 
-        access_token = create_access_token(identity=user.id)
+        # FIXED: Convert user ID to string for JWT
+        access_token = create_access_token(identity=str(user.id))
         return jsonify({
             'message': 'Login successful',
             'access_token': access_token,
@@ -214,7 +234,8 @@ def login():
 @jwt_required()
 def generate_pair_code():
     try:
-        current_user_id = get_jwt_identity()
+        # FIXED: Convert JWT identity back to int
+        current_user_id = int(get_jwt_identity())
         current_user = User.query.get(current_user_id)
 
         if not current_user:
@@ -243,7 +264,8 @@ def generate_pair_code():
 @jwt_required()
 def connect_with_code():
     try:
-        current_user_id = get_jwt_identity()
+        # FIXED: Convert JWT identity back to int
+        current_user_id = int(get_jwt_identity())
         current_user = User.query.get(current_user_id)
 
         data = request.get_json()
@@ -285,7 +307,8 @@ def connect_with_code():
 @jwt_required()
 def get_pair_status():
     try:
-        current_user_id = get_jwt_identity()
+        # FIXED: Convert JWT identity back to int
+        current_user_id = int(get_jwt_identity())
         current_user = User.query.get(current_user_id)
 
         if not current_user:
@@ -309,7 +332,8 @@ def get_pair_status():
 @jwt_required()
 def disconnect():
     try:
-        current_user_id = get_jwt_identity()
+        # FIXED: Convert JWT identity back to int
+        current_user_id = int(get_jwt_identity())
         current_user = User.query.get(current_user_id)
 
         if current_user.current_pair_id:
@@ -336,7 +360,8 @@ def disconnect():
 @jwt_required()
 def upload_image():
     try:
-        current_user_id = get_jwt_identity()
+        # FIXED: Convert JWT identity back to int
+        current_user_id = int(get_jwt_identity())
         current_user = User.query.get(current_user_id)
 
         if not current_user.current_pair_id:
@@ -392,7 +417,8 @@ def check_new_image():
     try:
         cleanup_expired_images()
 
-        current_user_id = get_jwt_identity()
+        # FIXED: Convert JWT identity back to int
+        current_user_id = int(get_jwt_identity())
 
         # Check for new images for the current user
         new_image = Image.query.filter_by(
@@ -433,7 +459,8 @@ def get_image_info(image_id):
     try:
         cleanup_expired_images()
 
-        current_user_id = get_jwt_identity()
+        # FIXED: Convert JWT identity back to int
+        current_user_id = int(get_jwt_identity())
 
         image = Image.query.filter_by(
             id=image_id, recipient_id=current_user_id).first()
@@ -473,7 +500,8 @@ def get_image_info(image_id):
 @jwt_required()
 def view_image(image_id):
     try:
-        current_user_id = get_jwt_identity()
+        # FIXED: Convert JWT identity back to int
+        current_user_id = int(get_jwt_identity())
 
         image = Image.query.filter_by(
             id=image_id, recipient_id=current_user_id).first()
@@ -500,11 +528,20 @@ def init_db():
     """Initialize database tables"""
     try:
         with app.app_context():
+            # Try to create tables
             db.create_all()
             print("✅ Database tables created successfully!")
+
+            # Test with a simple query
+            try:
+                db.session.execute('SELECT 1')
+                print("✅ Database connection test successful!")
+            except Exception as e:
+                print(f"⚠️  Database connection test failed: {e}")
+
             return True
     except Exception as e:
-        print(f"❌ Error creating database tables: {e}")
+        print(f"❌ Database initialization error: {e}")
         return False
 
 
